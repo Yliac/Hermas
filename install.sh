@@ -1217,9 +1217,26 @@ install_deps() {
                 exit 1
             fi
         fi
-        if ! pip_install_with_fallback "$pip_python" install -e '.[termux]' -c constraints-termux.txt; then
+
+        # psutil 不支持 Android 源码编译。将系统级 python-psutil 链接到 venv 中，
+        # 避免 pip 尝试从源码构建 psutil。
+        local sys_psutil_site
+        sys_psutil_site="$("$PYTHON_PATH" -c 'import psutil, os; print(os.path.dirname(os.path.dirname(psutil.__file__)))' 2>/dev/null || true)"
+        if [ -n "$sys_psutil_site" ] && [ "$USE_VENV" = true ] && [ -d "$INSTALL_DIR/venv/lib" ]; then
+            local venv_site
+            venv_site="$("$pip_python" -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null || true)"
+            if [ -n "$venv_site" ] && [ ! -d "$venv_site/psutil" ]; then
+                log_info "正在将系统 psutil 链接到虚拟环境..."
+                cp -a "$sys_psutil_site"/psutil* "$venv_site/" 2>/dev/null || \
+                    ln -sf "$sys_psutil_site"/psutil* "$venv_site/" 2>/dev/null || true
+            fi
+        fi
+
+        # --no-build-isolation：使用已安装的 setuptools，避免构建隔离环境下
+        # 再次从镜像拉取 setuptools（部分镜像尚未同步 Python 3.13 版本）
+        if ! pip_install_with_fallback "$pip_python" install --no-build-isolation -e '.[termux]' -c constraints-termux.txt; then
             log_warn "Termux 扩展安装（.[termux]）失败，正在回退到基础安装..."
-            if ! pip_install_with_fallback "$pip_python" install -e '.' -c constraints-termux.txt; then
+            if ! pip_install_with_fallback "$pip_python" install --no-build-isolation -e '.' -c constraints-termux.txt; then
                 log_error "Termux 环境下安装 Python 包失败"
                 log_info "请确认已安装这些依赖：pkg install clang rust make pkg-config libffi openssl"
                 exit 1
